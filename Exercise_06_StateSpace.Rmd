@@ -16,8 +16,11 @@ Next we'll want to grab the data we want to analyze. For this example we'll use 
 ```{r}
 gflu = read.csv("http://www.google.org/flutrends/about/data/flu/us/data.txt",skip=11)
 time = as.Date(gflu$Date)
-y = gflu$Massachusetts
-plot(time,y,type='l',ylab="Flu Index",lwd=2,log='y')
+y_all = gflu$Massachusetts
+t = seq(1,length(y_all))
+y = ifelse(t %% 4 == 0, y_all, NA) 
+y_trun = ifelse(t < (max(t)-40), y_all, NA) 
+plot(y ~ time,type='l',ylab="Flu Index",lwd=2,log='y')
 ```
 
 Next we'll want to define the JAGS code, which we'll do by writing the code as a string in R. The code itself has three components, the data model, the process model, and the priors. The data model relates the observed data, y, at any time point to the latent variable, x. For this example we'll assume that the observation model just consists of Gaussian observation error. The process model relates the state of the system at one point in time to the state one time step ahead. In this case we'll start with the simplest possible process model, a random walk, which just consists of Gaussian process error centered around the current value of the system.
@@ -51,6 +54,8 @@ model{
 Next we need to define the data and priors as a list. For this analysis we'll work with the log of the Google flu index since the zero-bound on the index and the magnitudes of the changes appear much closer to a log-normal distribution than to a normal.
 ```{r}
 data <- list(y=log(y),n=length(y),x_ic=log(1000),tau_ic=100,a_obs=1,r_obs=1,a_add=1,r_add=1)
+data_all <- list(y=log(y_all),n=length(y_all),x_ic=log(1000),tau_ic=100,a_obs=1,r_obs=1,a_add=1,r_add=1)
+data_trun <- list(y=log(y_trun),n=length(y_trun),x_ic=log(1000),tau_ic=100,a_obs=1,r_obs=1,a_add=1,r_add=1)
 ```
 
 Next we need to definite the initial state of the model's parameters for each chain in the MCMC. The overall initialization is stored as a list the same length as the number of chains, where each chain is passed a list of the initial values for each parameter. Unlike the definition of the priors, which had to be done independent of the data, the initialization of the MCMC is allowed (and even encouraged) to use the data. However, each chain should be started from different initial conditions. We handle this below by basing the initial conditions for each chain off of a different random sample of the original data. 
@@ -61,6 +66,16 @@ for(i in 1:nchain){
   y.samp = sample(y,length(y),replace=TRUE)
   init[[i]] <- list(tau_add=1/var(diff(log(y.samp))),tau_obs=5/var(log(y.samp)))
 }
+init_all <- list()
+for(i in 1:nchain){
+  y.samp = sample(y_all,length(y_all),replace=TRUE)
+  init_all[[i]] <- list(tau_add=1/var(diff(log(y.samp))),tau_obs=5/var(log(y.samp)))
+}
+init_trun <- list()
+for(i in 1:nchain){
+  y.samp = sample(y_trun,length(y_trun),replace=TRUE)
+  init_trun[[i]] <- list(tau_add=1/var(diff(log(y.samp))),tau_obs=5/var(log(y.samp)))
+}
 ```
 
 Now that we've defined the model, the data, and the initialization, we need to send all this info to JAGS, which will return the JAGS model object.
@@ -68,6 +83,14 @@ Now that we've defined the model, the data, and the initialization, we need to s
 j.model   <- jags.model (file = textConnection(RandomWalk),
                              data = data,
                              inits = init,
+                             n.chains = 3)
+j.model_all   <- jags.model (file = textConnection(RandomWalk),
+                             data = data_all,
+                             inits = init_all,
+                             n.chains = 3)
+j.model_trun   <- jags.model (file = textConnection(RandomWalk),
+                             data = data_trun,
+                             inits = init_trun,
                              n.chains = 3)
 ```
 
@@ -77,6 +100,13 @@ Next, given the defined JAGS model, we'll want to take a few samples from the MC
 jags.out   <- coda.samples (model = j.model,
                             variable.names = c("tau_add","tau_obs"),
                                 n.iter = 1000)
+jags.out_all <- coda.samples (model = j.model_all,
+                            variable.names = c("tau_add","tau_obs"),
+                                n.iter = 1000)
+jags.out_trun <- coda.samples (model = j.model_trun,
+                            variable.names = c("tau_add","tau_obs"),
+                                n.iter = 1000)
+
 plot(jags.out)
 ```
 
@@ -87,6 +117,13 @@ Now that the model has converged we'll want to take a much larger sample from th
 jags.out   <- coda.samples (model = j.model,
                             variable.names = c("x","tau_add","tau_obs"),
                                 n.iter = 10000)
+jags.out_all   <- coda.samples (model = j.model_all,
+                            variable.names = c("x","tau_add","tau_obs"),
+                                n.iter = 10000)
+jags.out_trun   <- coda.samples (model = j.model_trun,
+                            variable.names = c("x","tau_add","tau_obs"),
+                                n.iter = 10000)
+
 ```
 
 Given the full joint posteror samples, we're next going to visualize the output by just looking at the 95% credible interval of the timeseries of X's and compare that to the observed Y's. To do so we'll convert the coda output into a matrix and then calculate the quantiles. Looking at colnames(out) will show you that the first two columns are `tau_add` and `tau_obs`, so we calculate the CI starting from the 3rd column. We also transform the samples back from the log domain to the linear domain.
@@ -102,6 +139,7 @@ if(diff(time.rng) < 100){
   axis.Date(1, at=seq(time[time.rng[1]],time[time.rng[2]],by='month'), format = "%Y-%m")
 }
 ecoforecastR::ciEnvelope(time,ci[1,],ci[3,],col="lightBlue")
+points(time, y_all, pch='+', cex=0.5, col = 'red')
 points(time,y,pch="+",cex=0.5)
 ```
 
@@ -123,9 +161,57 @@ Assignment:
 To look at how observation frequency affects data assimilation, convert 3 out of every 4 observations to NA (i.e. treat the data as approximately monthly) and refit the model. 
 
 * Generate a time-series plot for the CI of x that includes the observations (as above). Use a different color and symbol to differentiate observations that were included in the model versus those that were converted to NA's.
+```{r}
+time.rng = c(1,length(time)) ## adjust to zoom in and out
+out <- as.matrix(jags.out)
+x.cols <- grep("^x",colnames(out)) ## grab all columns that start with the letter x
+ci <- apply(exp(out[,x.cols]),2,quantile,c(0.025,0.5,0.975))
+
+plot(time,ci[2,],type='n',ylim=range(y,na.rm=TRUE),ylab="Flu Index",log='y',xlim=time[time.rng])
+## adjust x-axis label to be monthly if zoomed
+if(diff(time.rng) < 100){ 
+  axis.Date(1, at=seq(time[time.rng[1]],time[time.rng[2]],by='month'), format = "%Y-%m")
+}
+ecoforecastR::ciEnvelope(time,ci[1,],ci[3,],col="lightBlue")
+points(time, y_all, pch='+', cex=0.5, col = 'red')
+points(time,y,pch="+",cex=0.5)
+
+```
+
 * Compare the CI between the two runs.
+```{r}
+out_all <- as.matrix(jags.out_all)
+x.cols <- grep("^x",colnames(out_all)) ## grab all columns that start with the letter x
+ci_all <- apply(exp(out_all[,x.cols]),2,quantile,c(0.025,0.5,0.975))
+
+plot(time,ci_all[2,],type='n',ylim=range(y_all,na.rm=TRUE),ylab="Flu Index",log='y',xlim=time[time.rng])
+## adjust x-axis label to be monthly if zoomed
+if(diff(time.rng) < 100){ 
+  axis.Date(1, at=seq(time[time.rng[1]],time[time.rng[2]],by='month'), format = "%Y-%m")
+}
+ecoforecastR::ciEnvelope(time,ci[1,],ci[3,],col="lightBlue")
+ecoforecastR::ciEnvelope(time,ci_all[1,],ci_all[3,],col="blue")
+points(time, y_all, pch='+', cex=0.5, col = 'red')
+points(time,y,pch="+",cex=0.5)
+```
 * Generate a predicted (median) vs observed plot for the data points that were removed
+```{r} 
+xpred <- apply(exp(out[,x.cols]),2,median) 
+xpred_all <- apply(exp(out[,x.cols]),2,median)
+
+lims = range(range(c(y_all[is.na(y)]), range(xpred[is.na(y)])))
+plot(y_all[is.na(y)] ~ xpred[is.na(y)],pch =16, ylim = lims, 
+     xlim= lims, ylab= 'Obs', xlab= 'Pred')
+abline(0,1)
+
+```
 * Comment on the accuracy and precision of the estimates.
+```{r}
+rmse <- sqrt(mean((y_all - xpred)^2)) # 
+bias <- mean((y_all - xpred)^2)
+r2 <- summary(lm(y_all ~ xpred))$r2
+
+```
 
 Extra Credit:
 -------------
@@ -133,6 +219,22 @@ Extra Credit:
 Return to the original data and instead of removing 3/4 of the data remove the last 40 observations (convert to NA) and refit the model to make a forecast for this period
 
 * Generate a time-series plot for the CI of x that includes the observations (as above but zoom the plot on the last ~80 observations). Use a different color and symbol to differentiate observations that were included in the model versus those that were converted to NA's.
+```{r}
+out_trun <- as.matrix(jags.out_trun)
+x.cols <- grep("^x",colnames(out_trun)) ## grab all columns that start with the letter x
+ci_trun <- apply(exp(out_trun[,x.cols]),2,quantile,c(0.025,0.5,0.975))
+
+plot(time,ci_trun[2,],type='n',ylim=range(y_trun,na.rm=TRUE),ylab="Flu Index",log='y',xlim=time[time.rng])
+## adjust x-axis label to be monthly if zoomed
+if(diff(time.rng) < 100){ 
+  axis.Date(1, at=seq(time[time.rng[1]],time[time.rng[2]],by='month'), format = "%Y-%m")
+}
+ecoforecastR::ciEnvelope(time,ci_trun[1,],ci_trun[3,],col="grey")
+ecoforecastR::ciEnvelope(time,ci[1,],ci[3,],col="lightBlue")
+ecoforecastR::ciEnvelope(time,ci_all[1,],ci_all[3,],col="blue")
+points(time, y_all, pch='+', cex=0.5, col = 'red')
+points(time,y,pch="+",cex=0.5)
+```
 * Comment on how well the random walk model performed (both accuracy and precision) and how it might be modified to improve both these criteria.
 
 # Dynamic Linear Models

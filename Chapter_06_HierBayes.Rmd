@@ -8,12 +8,99 @@ The objective of this activity is to explore basic hierarchical models.  We will
 # Case Study: Mosquito population size
 
 For this activity we will look at data on mosquito abundance.  The data file “Mosquito.csv” contains ten years worth of data for each of 5 replicate traps (Reminder: the function read.csv can be used to read comma-separated text files).   We will begin with the simplest possible model to explain this data and incrementally add complexity.
+```{r} 
+data <- read.csv('data/Mosquito.csv', stringsAsFactors = F)
+```
 
 ### Task 1: 
 
 1.  Plot mosquito abundance as a function of time in a way that distinguishes the replicates and connects them through time (e.g. with lines, colors, or symbols)
+```{r} 
+library(dplyr) 
+library(ggplot2)
 
+data <- data %>%
+  mutate(time = as.Date(paste0(time,'-01-01')))
+
+ggplot(data, aes(x = time, y = density, color = as.factor(replicate))) + 
+  geom_point() + 
+  geom_line() + 
+  theme_classic()
+
+```
 2.	Write and run a JAGS model to fit the overall mean and standard deviation, reporting summary statistics for both. You can use the JAGS code you developed from activity 5 for this.
+```{r}
+NormalMean = "
+model {
+mu ~ dnorm(mu0,T) # prior on the mean 
+for(i in 1:length(X)){
+X[i] ~ dnorm(mu,S) # data model
+}
+}
+"
+data_jags <- list(X = data$density, 
+                  mu0 = mean(data$density), 
+                  S = 1/sd(data$density)^2,
+                  T = 1/185) 
+inits <- list() 
+inits[[1]] <- list(mu = data_jags$mu0 + rnorm(1,0,data_jags$S))
+inits[[2]] <- list(mu = data_jags$mu0 + rnorm(1,0,data_jags$S))
+inits[[3]] <- list(mu = data_jags$mu0 + rnorm(1,0,data_jags$S))
+
+j.model   <- jags.model (file = textConnection(NormalMean),
+                             data = data_jags,
+                             inits = inits,
+                             n.chains = 3)
+
+var.out   <- coda.samples (model = j.model,
+                            variable.names = c("mu"),
+                                n.iter = 10000)
+
+plot(var.out)
+
+## remember to assess convergence and remove burn-in before doing other diagnostics
+GBR <- gelman.plot(var.out)
+
+burnin = 24000                                ## determine convergence
+jags.burn <- window(var.out,start=burnin)  ## remove burn-in
+plot(jags.burn)  
+
+DIC <- dic.samples(model = j.model, 
+            n.iter = 10000)
+DIC
+
+summary(jags.burn)
+
+## convert to matrix
+var.mat <- as.matrix(jags.burn)
+
+
+## credible and prediction intervals
+nsamp <- 15000
+samp <- sample.int(nrow(var.mat),nsamp)
+xpred <- seq(min(data$time),max(data$time), length.out = 100)  					## sequence of x values we're going to
+npred <- length(xpred)				##      make predictions for
+ypred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for predictive interval
+ycred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for credible interval
+
+for(g in seq_len(nsamp)){
+  theta = var.mat[samp[g],]
+  ycred[g,] <- theta["mu"] 
+  ypred[g,] <- rnorm(npred,ycred[g,],1/data_jags$S)
+}
+
+ci <- apply(ycred,2,quantile,c(0.025,0.5,0.975))  ## credible interval and median
+pi <- apply(ypred,2,quantile,c(0.025,0.975))		## prediction interval
+
+plot(data$time,data$density,cex=0.5,ylim=c(6.5,8.5))
+lines(xpred,ci[1,],col='green',lty=2)	## lower CI
+lines(xpred,ci[2,],col='green',lwd=3)	## median
+lines(xpred,ci[3,],col='green',lty=2)	## upper CI
+lines(xpred,pi[1,],col='blue',lty=2)	## lower PI
+lines(xpred,pi[2,],col='blue',lty=2)	## upper PI
+
+
+```
 
 3.	Add posterior CI and PI to the plot.
 
@@ -31,7 +118,86 @@ for(t in 1:NT){
 }
 ```
 In this chunk of code the expected value of the data X, `Ex`, varies with time, `t`, but not replicate, and thus NT is the number of years not the length of the overall dataset. In the process model `mu` is the overall 'global' mean and `alpha_t` is the deviation of a particular year from that overall mean (which is why the distribution of alphas has a mean 0). The random effect precision, `tau_t`, describes the year-to-year variability in the mean. 
+```{r} 
+NormalMean = "
+model {
+mu ~ dnorm(mu0,T) # prior on the mean 
+for(t in 1:NT){
+ Ex[t] <- mu + alpha_t[t]		  ## process model (does not vary with rep)
+ alpha_t[t] ~ dnorm(0,tau_t)  ## random year effect
+}
 
+for(r in 1:)
+
+for(i in 1:length(X)){
+X[i] ~ dnorm(mu,S) # data model
+}
+}
+"
+data_jags <- list(X = data$density, 
+                  mu0 = mean(data$density), 
+                  S = 1/sd(data$density)^2,
+                  T = 1/185,
+                  nT = length(unique(data$time))) 
+inits <- list() 
+inits[[1]] <- list(mu = data_jags$mu0 + rnorm(1,0,data_jags$S))
+inits[[2]] <- list(mu = data_jags$mu0 + rnorm(1,0,data_jags$S))
+inits[[3]] <- list(mu = data_jags$mu0 + rnorm(1,0,data_jags$S))
+
+j.model   <- jags.model (file = textConnection(NormalMean),
+                             data = data_jags,
+                             inits = inits,
+                             n.chains = 3)
+
+var.out   <- coda.samples (model = j.model,
+                            variable.names = c("mu"),
+                                n.iter = 10000)
+
+plot(var.out)
+
+## remember to assess convergence and remove burn-in before doing other diagnostics
+GBR <- gelman.plot(var.out)
+
+burnin = 24000                                ## determine convergence
+jags.burn <- window(var.out,start=burnin)  ## remove burn-in
+plot(jags.burn)  
+
+DIC <- dic.samples(model = j.model, 
+            n.iter = 10000)
+DIC
+
+summary(jags.burn)
+
+## convert to matrix
+var.mat <- as.matrix(jags.burn)
+
+
+## credible and prediction intervals
+nsamp <- 15000
+samp <- sample.int(nrow(var.mat),nsamp)
+xpred <- seq(min(data$time),max(data$time), length.out = 100)  					## sequence of x values we're going to
+npred <- length(xpred)				##      make predictions for
+ypred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for predictive interval
+ycred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for credible interval
+
+for(g in seq_len(nsamp)){
+  theta = var.mat[samp[g],]
+  ycred[g,] <- theta["mu"] 
+  ypred[g,] <- rnorm(npred,ycred[g,],1/data_jags$S)
+}
+
+ci <- apply(ycred,2,quantile,c(0.025,0.5,0.975))  ## credible interval and median
+pi <- apply(ypred,2,quantile,c(0.025,0.975))		## prediction interval
+
+plot(data$time,data$density,cex=0.5,ylim=c(6.5,8.5))
+lines(xpred,ci[1,],col='green',lty=2)	## lower CI
+lines(xpred,ci[2,],col='green',lwd=3)	## median
+lines(xpred,ci[3,],col='green',lty=2)	## upper CI
+lines(xpred,pi[1,],col='blue',lty=2)	## lower PI
+lines(xpred,pi[2,],col='blue',lty=2)	## upper PI
+
+
+```
 2. Because we're fitting this model hierarchically, `tau_t` is an unknown that is estimated from the data. Therefore, you need to add a prior on `tau_t`, the unknown year-to-year variability that we're trying to estimate. Note: If `tau_t` were simply a prescibed constant this would correspond to setting a prior on the `alpha_t`s, which would then be **fixed** effects rather than random effects
 
 3. Update the data model to reference the process model, `Ex[time[i]]`, instead of `mu`. Here we're assuming `i` is the counter in the loop over all the rows in the data and that `time` is an indexing variable used to look up the year for that particular row in the data. For example, if I loaded the raw data as `dat` this could be calculated as `time <- as.numeric(as.factor(dat$time))``
