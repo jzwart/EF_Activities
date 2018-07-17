@@ -46,10 +46,109 @@ Normally JAGS doesn't let functions be on the left-hand side of an <- but the _l
 
 * Modify the data model to be _dpois_ instead of _dnorm_
  
+```{r} 
+#modified for ch 6 
+pois_regression <- "
+model{
+
+beta ~ dmnorm(b0,Vb)  	## multivariate Normal prior on vector of regression params
+
+for(i in 1:n){
+log(mu[i]) <- beta[1] + beta[2]*TDR[i]   	## process model
+y[i]  ~ dpois(mu[i])		        ## data model
+}
+}
+"
+
+data <- list(TDR = TDR, y = y, n = n)
+
+# specifying priors 
+data$b0 <- as.vector(c(0,0))      ## regression beta means
+data$Vb <- solve(diag(10000,2))   ## regression beta precisions
+
+## initial conditions
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+  inits[[i]] <- list(beta = rnorm(2,0,5))
+}
+
+```
+
 ### Task 1: 
 
 1.  Fit the Bayesian Poisson regression model. Provide the DIC, and summary table & posterior density plots for all model parameters.  Report the burn in and effective MCMC sample size.
+```{r}
+
+library(R2jags)
+j.model   <- jags.model(file = textConnection(pois_regression),
+                        data = data,
+                        inits = inits,
+                        n.chains = nchain)
+
+var.out   <- coda.samples (model = j.model,
+                            variable.names = c("beta"),
+                                n.iter = 15000)
+plot(var.out)
+
+## remember to assess convergence and remove burn-in before doing other diagnostics
+GBR <- gelman.plot(var.out)
+
+burnin = 6000                                ## determine convergence
+jags.burn <- window(var.out,start=burnin)  ## remove burn-in
+plot(jags.burn)  
+
+DIC <- dic.samples(model = j.model, 
+            n.iter = 15000)
+DIC
+
+summary(jags.burn)
+
+## convert to matrix
+var.mat <- as.matrix(jags.burn)
+
+## Pairwise scatter plots & correlation
+pairs(var.mat)	## pairs plot to evaluate parameter correlation
+cor(var.mat)    ## correlation matrix among model parameters
+
+```
+
 2.	Plot the model credible interval and predictive interval.  Be sure to include the scatterplot of the observed data.
+```{r} 
+
+xpred <- TDR
+plot(TDR,y)
+for(i in 1:10){
+  lines(xpred, var.mat[i,"beta[1]"] + var.mat[i,"beta[2]"]*xpred)
+}
+
+## credible and prediction intervals
+nsamp <- 15000
+samp <- sample.int(nrow(var.mat),nsamp)
+xpred <- seq(min(TDR),max(TDR), length.out = 100)  					## sequence of x values we're going to
+npred <- length(xpred)				##      make predictions for
+ypred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for predictive interval
+ycred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for credible interval
+
+for(g in seq_len(nsamp)){
+  theta = var.mat[samp[g],]
+  ycred[g,] <- exp(theta["beta[1]"] + theta["beta[2]"]*xpred)
+  ypred[g,] <- rpois(npred,ycred[g,])
+}
+
+ci <- apply(ycred,2,quantile,c(0.025,0.5,0.975))  ## credible interval and median
+pi <- apply(ypred,2,quantile,c(0.025,0.975))		## prediction interval
+
+plot(TDR,y,cex=0.5,xlim=range(TDR),ylim=range(y))
+lines(xpred,ci[1,],col='green',lty=2)	## lower CI
+lines(xpred,ci[2,],col='green',lwd=3)	## median
+lines(xpred,ci[3,],col='green',lty=2)	## upper CI
+lines(xpred,pi[1,],col='blue',lty=2)	## lower PI
+lines(xpred,pi[2,],col='blue',lty=2)	## upper PI
+
+
+```
+
 3.	How well does the Poisson model match the data?  Does 95% of the data fall within the 95% PI?
 
 ## Missing Data
