@@ -254,7 +254,8 @@ lines(time2,N.I.ci[2,],lwd=0.5)
 
 **Question 2:** 
 A) Describe the pattern and relative magnitude of the parameter uncertainty and compare this to your expectations. 
-B) Using the existing model and Monte Carlo approach, describe how you might partition the contribution of each parameter (r, Kg, alpha, beta) to the forecast uncertainty.
+# Ecological forecasting is not necesarily an initial condition problem 
+B) Using the existing model and Monte Carlo approach, describe how you might partition the contribution of each parameter (r, Kg, alpha, beta) to the forecast uncertainty. # hold mean parameter for all parameters except the one you're trying to see uncertainty contribution 
 
 ### Driver uncertainty
 
@@ -323,6 +324,7 @@ lines(time2,N.I.ci[2,],lwd=0.5)
 ```
 
 **Question 4:** Why might the relative contribution of the process error decline with time? Does this match expectations?
+# yes because the driver uncertainty increases 
 
 ### Random Effect uncertainty
 
@@ -388,6 +390,8 @@ legend("topleft",legend=c("Process","Driver","Parameter","InitCond"),col=rev(N.c
 
 
 **Question 5:**  Based on results, where would you focus your research efforts next if your aim was to improve out-of-sample predictions? What about in-sample predictions?
+# understand site-to-site variability; 
+# depends on the time scale - 
 
 ## Next steps:
 
